@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>עין חכמה - זיהוי אובייקטים חכם</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Heebo', sans-serif;
+            background-color: #f0f4f8;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .header {
+            background-color: #1a237e;
+            color: white;
+            width: 100%;
+            padding: 20px 0;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .logo {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .logo span {
+            color: #64ffda;
+        }
+        .container {
+            display: flex;
+            background-color: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            margin-top: 30px;
+        }
+        .video-container {
+            position: relative;
+        }
+        #video, #canvas {
+            display: block;
+            border-radius: 10px;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .info-panel {
+            width: 300px;
+            padding: 20px;
+            background-color: #e8eaf6;
+            overflow-y: auto;
+            max-height: 480px;
+        }
+        h1, h2 {
+            color: #1a237e;
+            margin-top: 0;
+        }
+        #items {
+            margin-top: 20px;
+        }
+        #items p {
+            margin: 5px 0;
+            padding: 10px;
+            background-color: #c5cae9;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        #items p:hover {
+            background-color: #9fa8da;
+        }
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: #64ffda;
+            font-size: 24px;
+        }
+        #totalItems {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 10px;
+            color: #1a237e;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">עין <span>חכמה</span></div>
+        <div>מערכת חדשנית לזיהוי אובייקטים</div>
+    </div>
+    <div class="loading" id="loading">טוען מודל AI...</div>
+    <div class="container">
+        <div class="video-container">
+            <video id="video" width="640" height="480" autoplay muted></video>
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </div>
+        <div class="info-panel">
+            <h1>זיהוי אובייקטים בזמן אמת</h1>
+            <div id="totalItems"></div>
+            <h2>פריטים מזוהים</h2>
+            <div id="items"></div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const itemsDiv = document.getElementById('items');
+        const loadingDiv = document.getElementById('loading');
+        const totalItemsDiv = document.getElementById('totalItems');
+
+        let model;
+        let detectedItems = new Set();
+
+        // מילון תרגום מאנגלית לעברית
+        const translations = {
+            'person': 'אדם', 'bicycle': 'אופניים', 'car': 'מכונית', 'motorcycle': 'אופנוע',
+            'airplane': 'מטוס', 'bus': 'אוטובוס', 'train': 'רכבת', 'truck': 'משאית',
+            'boat': 'סירה', 'traffic light': 'רמזור', 'fire hydrant': 'ברז כיבוי',
+            'stop sign': 'תמרור עצור', 'parking meter': 'מד חניה', 'bench': 'ספסל',
+            'bird': 'ציפור', 'cat': 'חתול', 'dog': 'כלב', 'horse': 'סוס',
+            'sheep': 'כבשה', 'cow': 'פרה', 'elephant': 'פיל', 'bear': 'דוב',
+            'zebra': 'זברה', 'giraffe': 'ג\'ירפה', 'backpack': 'תיק גב', 'umbrella': 'מטריה',
+            'handbag': 'תיק יד', 'tie': 'עניבה', 'suitcase': 'מזוודה', 'frisbee': 'פריסבי',
+            'skis': 'מגלשיים', 'snowboard': 'סנובורד', 'sports ball': 'כדור ספורט',
+            'kite': 'עפיפון', 'baseball bat': 'מחבט בייסבול', 'baseball glove': 'כפפת בייסבול',
+            'skateboard': 'סקייטבורד', 'surfboard': 'גלשן', 'tennis racket': 'מחבט טניס',
+            'bottle': 'בקבוק', 'wine glass': 'כוס יין', 'cup': 'כוס', 'fork': 'מזלג',
+            'knife': 'סכין', 'spoon': 'כף', 'bowl': 'קערה', 'banana': 'בננה',
+            'apple': 'תפוח', 'sandwich': 'כריך', 'orange': 'תפוז', 'broccoli': 'ברוקולי',
+            'carrot': 'גזר', 'hot dog': 'נקניקיה', 'pizza': 'פיצה', 'donut': 'סופגנייה',
+            'cake': 'עוגה', 'chair': 'כיסא', 'couch': 'ספה', 'potted plant': 'צמח בעציץ',
+            'bed': 'מיטה', 'dining table': 'שולחן אוכל', 'toilet': 'אסלה', 'tv': 'טלוויזיה',
+            'laptop': 'מחשב נייד', 'mouse': 'עכבר', 'remote': 'שלט', 'keyboard': 'מקלדת',
+            'cell phone': 'טלפון נייד', 'microwave': 'מיקרוגל', 'oven': 'תנור', 'toaster': 'טוסטר',
+            'sink': 'כיור', 'refrigerator': 'מקרר', 'book': 'ספר', 'clock': 'שעון',
+            'vase': 'אגרטל', 'scissors': 'מספריים', 'teddy bear': 'דובי', 'hair drier': 'מייבש שיער',
+            'toothbrush': 'מברשת שיניים'
+        };
+
+        async function loadModel() {
+            model = await cocoSsd.load();
+            console.log('Model loaded');
+            loadingDiv.style.display = 'none';
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.addEventListener('loadeddata', detectObjects);
+                })
+                .catch(err => {
+                    console.error("שגיאה בגישה למצלמה:", err);
+                });
+        }
+
+        async function detectObjects() {
+            if (!model) return;
+            
+            ctx.drawImage(video, 0, 0, 640, 480);
+            const predictions = await model.detect(canvas);
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            predictions.forEach(prediction => {
+                const { class: item, score, bbox } = prediction;
+                const translatedItem = translations[item] || item;
+                detectedItems.add(translatedItem);
+                
+                ctx.strokeStyle = '#1a237e';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(...bbox);
+                
+                ctx.fillStyle = '#1a237e';
+                ctx.font = 'bold 18px Heebo';
+                ctx.fillText(translatedItem, bbox[0], bbox[1] > 20 ? bbox[1] - 5 : 20);
+            });
+            
+            updateItemsList();
+            updateTotalItems();
+            
+            requestAnimationFrame(detectObjects);
+        }
+
+        function updateItemsList() {
+            itemsDiv.innerHTML = Array.from(detectedItems)
+                .map(item => `<p>${item}</p>`)
+                .join('');
+        }
+
+        function updateTotalItems() {
+            totalItemsDiv.innerHTML = `סה"כ סוגי פריטים: ${detectedItems.size}`;
+        }
+
+        loadModel();
+    </script>
+</body>
+</html>
